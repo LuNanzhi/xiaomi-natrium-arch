@@ -1,0 +1,9 @@
+# large binaries live in GitHub Releases, not in git
+*.img
+*.tar.gz
+*.tar.xz
+*.zip
+*.cpio*
+*.apk
+pcache/
+__pycache__/

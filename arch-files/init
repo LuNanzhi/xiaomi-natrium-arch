@@ -1,0 +1,50 @@
+#!/bin/busybox sh
+# Arch Linux ARM initramfs for xiaomi-natrium (Mi 5s Plus, MSM8996Pro).
+#
+# Job: find the ext4 root on the userdata partition and hand over to systemd.
+# The kernel has UFS + ext4 built in, so no modules are needed here.
+# If the root cannot be found we drop to a shell instead of panicking, so the
+# phone never goes dark silently again.
+
+/bin/busybox --install -s /bin 2>/dev/null
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export HOME=/root
+
+mount -t proc   proc   /proc   2>/dev/null
+mount -t sysfs  sysfs  /sys    2>/dev/null
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts 2>/dev/null
+mkdir -p /newroot
+
+rescue() {
+    echo
+    echo "=============================================="
+    echo " natrium: root filesystem not found"
+    echo "=============================================="
+    echo " block devices:"
+    cat /proc/partitions
+    echo " cmdline: $(cat /proc/cmdline)"
+    echo " dropping to a shell (busybox). Try:"
+    echo "   mount -t ext4 /dev/disk/by-partlabel/userdata /newroot"
+    echo "   switch_root /newroot /sbin/init"
+    exec sh
+}
+
+# wait for the partition table + userdata to appear (UFS probe can be slow)
+i=0
+while [ "$i" -lt 30 ]; do
+    for d in /dev/disk/by-partlabel/userdata /dev/disk/by-partlabel/Userdata /dev/sda*; do
+        [ -e "$d" ] || continue
+        if mount -t ext4 -o rw "$d" /newroot 2>/dev/null; then
+            if [ -x /newroot/sbin/init ] || [ -x /newroot/usr/lib/systemd/systemd ]; then
+                echo "natrium: root = $d"
+                exec switch_root /newroot /sbin/init
+            fi
+            umount /newroot
+        fi
+    done
+    i=$((i + 1))
+    sleep 1
+done
+rescue

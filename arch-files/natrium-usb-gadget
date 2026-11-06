@@ -1,0 +1,74 @@
+#!/bin/sh
+# Bring up an RNDIS (Windows-friendly) USB network gadget on xiaomi-natrium.
+# The host gets 172.16.42.x by DHCP; the phone is 172.16.42.1.
+set -e
+
+G=/sys/kernel/config/usb_gadget/natrium
+
+down() {
+    if [ -d "$G" ]; then
+        ls /sys/class/udc 2>/dev/null | head -1 | while read -r u; do
+            [ -n "$u" ] && echo "" > "$G/UDC" 2>/dev/null || true
+        done
+        rm -f "$G/configs/c.1/rndis.usb0" 2>/dev/null || true
+        rmdir "$G/functions/rndis.usb0" 2>/dev/null || true
+        rmdir "$G/configs/c.1/strings/0x409" "$G/configs/c.1" 2>/dev/null || true
+        rmdir "$G/strings/0x409" "$G" 2>/dev/null || true
+    fi
+}
+
+up() {
+    modprobe libcomposite
+    modprobe u_ether
+    modprobe usb_f_rndis
+
+    mount -t configfs none /sys/kernel/config 2>/dev/null || true
+    [ -d "$G" ] || mkdir -p "$G"
+
+    echo 0x1d6b > "$G/idVendor"
+    echo 0x0104 > "$G/idProduct"
+    echo 0x0100 > "$G/bcdDevice"
+    echo 0x0200 > "$G/bcdUSB"
+
+    mkdir -p "$G/strings/0x409"
+    echo "natrium"          > "$G/strings/0x409/serialnumber"
+    echo "Xiaomi"           > "$G/strings/0x409/manufacturer"
+    echo "natrium (Arch)"   > "$G/strings/0x409/product"
+
+    mkdir -p "$G/configs/c.1/strings/0x409"
+    echo "rndis"            > "$G/configs/c.1/strings/0x409/configuration"
+    echo 250                > "$G/configs/c.1/MaxPower"
+
+    mkdir -p "$G/functions/rndis.usb0"
+    # make Windows auto-bind the generic RNDIS driver
+    echo "RNDIS"            > "$G/functions/rndis.usb0/os_desc/interface.rndis/compatible_id" 2>/dev/null || true
+    echo "5162001"          > "$G/functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id" 2>/dev/null || true
+
+    # a CDC-ACM serial port as well: Windows binds usbser.sys in-box, and we run
+    # a getty on ttyGS0, so there is always a way in even if RNDIS misbehaves
+    mkdir -p "$G/functions/acm.GS0"
+
+    [ -L "$G/configs/c.1/rndis.usb0" ] || ln -s "$G/functions/rndis.usb0" "$G/configs/c.1/"
+    [ -L "$G/configs/c.1/acm.GS0" ]   || ln -s "$G/functions/acm.GS0"   "$G/configs/c.1/"
+
+    # dwc3 probes deferred until its QMP PHY drivers are loaded, so the UDC can
+    # show up a few seconds late - wait for it instead of failing one-shot.
+    UDC=""
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        UDC="$(ls /sys/class/udc 2>/dev/null | head -1)"
+        [ -n "$UDC" ] && break
+        sleep 1
+    done
+    if [ -z "$UDC" ]; then
+        echo "natrium-usb-gadget: no UDC after 15s (UDC list empty, dwc3 not bound)" >&2
+        exit 1
+    fi
+    echo "$UDC" > "$G/UDC"
+    echo "natrium-usb-gadget: bound to $UDC"
+}
+
+case "${1:-up}" in
+    up)   up ;;
+    down) down ;;
+    *)    echo "usage: $0 up|down" >&2; exit 2 ;;
+esac

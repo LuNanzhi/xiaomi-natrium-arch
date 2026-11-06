@@ -1,0 +1,14 @@
+[Unit]
+Description=USB RNDIS network gadget (natrium)
+After=systemd-modules-load.service
+Wants=network-pre.target
+Before=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/natrium-usb-gadget up
+ExecStop=/usr/local/sbin/natrium-usb-gadget down
+
+[Install]
+WantedBy=multi-user.target
